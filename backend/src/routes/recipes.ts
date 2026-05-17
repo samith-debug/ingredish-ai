@@ -23,13 +23,13 @@ const SaveRecipeSchema = z.object({
   youtubeSearch: z.string().optional(),
 });
 
-recipesRouter.post("/save", validateBody(SaveRecipeSchema), (req, res) => {
+recipesRouter.post("/save", validateBody(SaveRecipeSchema), async (req, res) => {
   try {
     const data = req.body as z.infer<typeof SaveRecipeSchema>;
     const userId = req.user!.userId;
     const id = uuid();
 
-    execute(
+    await execute(
       `INSERT INTO generated_recipes
          (id, user_id, title, cuisine, time, difficulty, calories, protein, carbs, fat,
           description, ingredients, steps, youtube_search)
@@ -45,12 +45,12 @@ recipesRouter.post("/save", validateBody(SaveRecipeSchema), (req, res) => {
       ],
     );
 
-    execute(
+    await execute(
       "INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'generated', ?)",
       [uuid(), userId, JSON.stringify({ recipeId: id, title: data.title })],
     );
 
-    const row = queryOne<{ created_at: string }>("SELECT created_at FROM generated_recipes WHERE id = ?", [id]);
+    const row = await queryOne<{ created_at: string }>("SELECT created_at FROM generated_recipes WHERE id = ?", [id]);
     res.status(201).json({ ok: true, id, createdAt: row?.created_at });
   } catch (err) {
     console.error("[recipes/save]", err);
@@ -59,17 +59,20 @@ recipesRouter.post("/save", validateBody(SaveRecipeSchema), (req, res) => {
 });
 
 // GET /recipes/history
-recipesRouter.get("/history", (req, res) => {
+recipesRouter.get("/history", async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 20, 100);
     const offset = Number(req.query.offset) || 0;
 
-    const rows = query<{ id: string; title: string; cuisine: string; time: string; difficulty: string; calories: number; description: string; created_at: string }>(
-      "SELECT id, title, cuisine, time, difficulty, calories, description, created_at FROM generated_recipes WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-      [req.user!.userId, limit, offset],
-    );
-    const countRow = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ?", [req.user!.userId]);
-    res.json({ ok: true, recipes: rows, total: countRow?.count ?? 0 });
+    const [rows, countRow] = await Promise.all([
+      query<{ id: string; title: string; cuisine: string; time: string; difficulty: string; calories: number; description: string; created_at: string }>(
+        "SELECT id, title, cuisine, time, difficulty, calories, description, created_at FROM generated_recipes WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        [req.user!.userId, limit, offset],
+      ),
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ?", [req.user!.userId]),
+    ]);
+
+    res.json({ ok: true, recipes: rows, total: Number(countRow?.count ?? 0) });
   } catch (err) {
     console.error("[recipes/history]", err);
     res.status(500).json({ ok: false, error: "server_error", message: "Failed to fetch history" });
@@ -77,9 +80,9 @@ recipesRouter.get("/history", (req, res) => {
 });
 
 // GET /recipes/:id
-recipesRouter.get("/:id", (req, res) => {
+recipesRouter.get("/:id", async (req, res) => {
   try {
-    const recipe = queryOne<Record<string, unknown>>(
+    const recipe = await queryOne<Record<string, unknown>>(
       "SELECT * FROM generated_recipes WHERE id = ? AND user_id = ?",
       [req.params.id, req.user!.userId],
     );
@@ -95,10 +98,10 @@ recipesRouter.get("/:id", (req, res) => {
 });
 
 // POST /recipes/:id/cooked
-recipesRouter.post("/:id/cooked", (req, res) => {
+recipesRouter.post("/:id/cooked", async (req, res) => {
   try {
     const userId = req.user!.userId;
-    const recipe = queryOne<{ id: string; title: string }>(
+    const recipe = await queryOne<{ id: string; title: string }>(
       "SELECT id, title FROM generated_recipes WHERE id = ? AND user_id = ?",
       [req.params.id, userId],
     );
@@ -106,7 +109,7 @@ recipesRouter.post("/:id/cooked", (req, res) => {
       res.status(404).json({ ok: false, error: "not_found", message: "Recipe not found" });
       return;
     }
-    execute(
+    await execute(
       "INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'cooked', ?)",
       [uuid(), userId, JSON.stringify({ recipeId: recipe.id, title: recipe.title })],
     );
