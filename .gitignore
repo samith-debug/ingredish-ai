@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+.vite/
+
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# SQLite database — local only
+backend/src/db/*.db
+backend/src/db/*.db-journal
+backend/src/db/*.db-wal
+backend/src/db/*.db-shm
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# TypeScript build cache
+*.tsbuildinfo
