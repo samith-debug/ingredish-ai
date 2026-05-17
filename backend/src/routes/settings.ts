@@ -8,26 +8,26 @@ export const settingsRouter = Router();
 settingsRouter.use(requireAuth);
 
 // GET /settings
-settingsRouter.get("/", (req, res) => {
+settingsRouter.get("/", async (req, res) => {
   try {
     const userId = req.user!.userId;
-    execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", [userId]);
+    await execute("INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT DO NOTHING", [userId]);
 
-    const s = queryOne<{
-      vegetarian: number; spicy: number; gluten_free: number;
-      ai_personal: number; notif_daily: number; notif_weekly: number;
+    const s = await queryOne<{
+      vegetarian: boolean; spicy: boolean; gluten_free: boolean;
+      ai_personal: boolean; notif_daily: boolean; notif_weekly: boolean;
       theme: string; updated_at: string;
     }>("SELECT * FROM user_settings WHERE user_id = ?", [userId]);
 
     res.json({
       ok: true,
       settings: {
-        vegetarian:  Boolean(s?.vegetarian  ?? 1),
-        spicy:       Boolean(s?.spicy       ?? 0),
-        glutenFree:  Boolean(s?.gluten_free ?? 0),
-        aiPersonal:  Boolean(s?.ai_personal ?? 1),
-        notifDaily:  Boolean(s?.notif_daily  ?? 1),
-        notifWeekly: Boolean(s?.notif_weekly ?? 1),
+        vegetarian:  s?.vegetarian  ?? true,
+        spicy:       s?.spicy       ?? false,
+        glutenFree:  s?.gluten_free ?? false,
+        aiPersonal:  s?.ai_personal ?? true,
+        notifDaily:  s?.notif_daily ?? true,
+        notifWeekly: s?.notif_weekly ?? true,
         theme:       s?.theme ?? "saffron-ember",
         updatedAt:   s?.updated_at,
       },
@@ -49,12 +49,12 @@ const UpdateSettingsSchema = z.object({
   theme:       z.string().optional(),
 });
 
-settingsRouter.put("/", validateBody(UpdateSettingsSchema), (req, res) => {
+settingsRouter.put("/", validateBody(UpdateSettingsSchema), async (req, res) => {
   try {
     const userId = req.user!.userId;
     const data = req.body as z.infer<typeof UpdateSettingsSchema>;
 
-    execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", [userId]);
+    await execute("INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT DO NOTHING", [userId]);
 
     const fieldMap: Record<string, string> = {
       vegetarian:  "vegetarian",
@@ -66,20 +66,19 @@ settingsRouter.put("/", validateBody(UpdateSettingsSchema), (req, res) => {
       theme:       "theme",
     };
 
-    const setClauses: string[] = ["updated_at = datetime('now')"];
+    const setClauses: string[] = ["updated_at = NOW()"];
     const values: unknown[] = [];
 
     for (const [key, col] of Object.entries(fieldMap)) {
       const val = data[key as keyof typeof data];
       if (val !== undefined) {
         setClauses.push(`${col} = ?`);
-        // SQLite stores booleans as 0/1
-        values.push(typeof val === "boolean" ? (val ? 1 : 0) : val);
+        values.push(val); // Postgres handles booleans natively
       }
     }
     values.push(userId);
 
-    execute(`UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = ?`, values);
+    await execute(`UPDATE user_settings SET ${setClauses.join(", ")} WHERE user_id = ?`, values);
     res.json({ ok: true, message: "Settings saved" });
   } catch (err) {
     console.error("[settings/put]", err);

@@ -1,49 +1,68 @@
-import Database from "better-sqlite3";
+/**
+ * Database client — Postgres (via pg).
+ * Converts SQLite-style ? placeholders to $1, $2, $3... for Postgres.
+ * Drop-in replacement for the old SQLite client — same sync-style API surface
+ * but all functions are now async.
+ */
+import pg from "pg";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
-import { dirname, join, resolve } from "path";
+import { dirname, join } from "path";
 import { randomUUID } from "crypto";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const { Pool } = pg;
 
-// DB file lives next to this file (backend/src/db/ingredish.db)
-const DB_PATH = resolve(__dirname, "ingredish.db");
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  max: 5,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
 
-export const db = new Database(DB_PATH);
+pool.on("error", (err) => console.error("[DB] Unexpected pool error:", err));
 
-// Enable WAL mode for better concurrent read performance
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+// ── Placeholder converter ─────────────────────────────────────
+
+function toPg(sql: string): string {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
+}
 
 // ── Typed query helpers ───────────────────────────────────────
 
 /** Run a SELECT and return all rows as T[] */
-export function query<T extends Record<string, unknown>>(
+export async function query<T extends Record<string, unknown>>(
   sql: string,
   params: unknown[] = [],
-): T[] {
-  return db.prepare(sql).all(...params) as T[];
+): Promise<T[]> {
+  const { rows } = await pool.query(toPg(sql), params);
+  return rows as T[];
 }
 
 /** Run a SELECT and return the first row or null */
-export function queryOne<T extends Record<string, unknown>>(
+export async function queryOne<T extends Record<string, unknown>>(
   sql: string,
   params: unknown[] = [],
-): T | null {
-  return (db.prepare(sql).get(...params) as T | undefined) ?? null;
+): Promise<T | null> {
+  const { rows } = await pool.query(toPg(sql), params);
+  return (rows[0] as T) ?? null;
 }
 
 /** Run an INSERT / UPDATE / DELETE */
-export function execute(sql: string, params: unknown[] = []): void {
-  db.prepare(sql).run(...params);
+export async function execute(sql: string, params: unknown[] = []): Promise<void> {
+  await pool.query(toPg(sql), params);
 }
 
-/** Generate a UUID (replaces gen_random_uuid() from Postgres) */
+/** Generate a UUID */
 export { randomUUID as uuid };
 
-/** Apply the SQL schema idempotently */
-export function applySchema(): void {
+/** Apply the SQL schema idempotently (called on boot) */
+export async function applySchema(): Promise<void> {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
   const sql = readFileSync(join(__dirname, "schema.sql"), "utf-8");
-  db.exec(sql);
-  console.log("[DB] SQLite schema applied ✓  →", DB_PATH);
+  await pool.query(sql);
+  console.log("[DB] Postgres schema applied ✓");
 }
+
+export { pool };

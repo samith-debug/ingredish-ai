@@ -8,9 +8,9 @@ export const favoritesRouter = Router();
 favoritesRouter.use(requireAuth);
 
 // GET /favorites
-favoritesRouter.get("/", (req, res) => {
+favoritesRouter.get("/", async (req, res) => {
   try {
-    const rows = query<{ id: string; recipe_id: string; recipe_type: string; created_at: string }>(
+    const rows = await query<{ id: string; recipe_id: string; recipe_type: string; created_at: string }>(
       "SELECT id, recipe_id, recipe_type, created_at FROM favorites WHERE user_id = ? ORDER BY created_at DESC",
       [req.user!.userId],
     );
@@ -27,12 +27,12 @@ const AddFavoriteSchema = z.object({
   recipeType: z.enum(["famous", "generated"]).default("famous"),
 });
 
-favoritesRouter.post("/", validateBody(AddFavoriteSchema), (req, res) => {
+favoritesRouter.post("/", validateBody(AddFavoriteSchema), async (req, res) => {
   try {
     const { recipeId, recipeType } = req.body as z.infer<typeof AddFavoriteSchema>;
     const userId = req.user!.userId;
 
-    const existing = queryOne<{ id: string }>(
+    const existing = await queryOne<{ id: string }>(
       "SELECT id FROM favorites WHERE user_id = ? AND recipe_id = ?",
       [userId, recipeId],
     );
@@ -42,8 +42,8 @@ favoritesRouter.post("/", validateBody(AddFavoriteSchema), (req, res) => {
     }
 
     const id = uuid();
-    execute("INSERT INTO favorites (id, user_id, recipe_id, recipe_type) VALUES (?, ?, ?, ?)", [id, userId, recipeId, recipeType]);
-    execute("INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'favorited', ?)", [uuid(), userId, JSON.stringify({ recipeId, recipeType })]);
+    await execute("INSERT INTO favorites (id, user_id, recipe_id, recipe_type) VALUES (?, ?, ?, ?)", [id, userId, recipeId, recipeType]);
+    await execute("INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'favorited', ?)", [uuid(), userId, JSON.stringify({ recipeId, recipeType })]);
 
     res.status(201).json({ ok: true, favorite: { id, recipe_id: recipeId, recipe_type: recipeType } });
   } catch (err) {
@@ -53,18 +53,18 @@ favoritesRouter.post("/", validateBody(AddFavoriteSchema), (req, res) => {
 });
 
 // DELETE /favorites/:recipeId
-favoritesRouter.delete("/:recipeId", (req, res) => {
+favoritesRouter.delete("/:recipeId", async (req, res) => {
   try {
     const { recipeId } = req.params;
     const userId = req.user!.userId;
 
-    const existing = queryOne<{ id: string }>("SELECT id FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
+    const existing = await queryOne<{ id: string }>("SELECT id FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
     if (!existing) {
       res.status(404).json({ ok: false, error: "not_found", message: "Favorite not found" });
       return;
     }
 
-    execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
+    await execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
     res.json({ ok: true, message: "Removed from favorites" });
   } catch (err) {
     console.error("[favorites/delete]", err);
@@ -78,18 +78,21 @@ const ToggleSchema = z.object({
   recipeType: z.enum(["famous", "generated"]).default("famous"),
 });
 
-favoritesRouter.post("/toggle", validateBody(ToggleSchema), (req, res) => {
+favoritesRouter.post("/toggle", validateBody(ToggleSchema), async (req, res) => {
   try {
     const { recipeId, recipeType } = req.body as z.infer<typeof ToggleSchema>;
     const userId = req.user!.userId;
 
-    const existing = queryOne<{ id: string }>("SELECT id FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
+    const existing = await queryOne<{ id: string }>("SELECT id FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
     if (existing) {
-      execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
+      await execute("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?", [userId, recipeId]);
       res.json({ ok: true, isFavorited: false });
     } else {
-      execute("INSERT OR IGNORE INTO favorites (id, user_id, recipe_id, recipe_type) VALUES (?, ?, ?, ?)", [uuid(), userId, recipeId, recipeType]);
-      execute("INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'favorited', ?)", [uuid(), userId, JSON.stringify({ recipeId, recipeType })]);
+      await execute(
+        "INSERT INTO favorites (id, user_id, recipe_id, recipe_type) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        [uuid(), userId, recipeId, recipeType],
+      );
+      await execute("INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?, ?, 'favorited', ?)", [uuid(), userId, JSON.stringify({ recipeId, recipeType })]);
       res.json({ ok: true, isFavorited: true });
     }
   } catch (err) {

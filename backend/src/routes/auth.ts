@@ -24,7 +24,7 @@ authRouter.post("/register", validateBody(RegisterSchema), async (req, res) => {
   try {
     const { name, email, password } = req.body as z.infer<typeof RegisterSchema>;
 
-    const existing = queryOne<{ id: string }>("SELECT id FROM users WHERE email = ?", [email]);
+    const existing = await queryOne<{ id: string }>("SELECT id FROM users WHERE email = ?", [email]);
     if (existing) {
       res.status(409).json({ ok: false, error: "email_taken", message: "Email already registered" });
       return;
@@ -32,8 +32,8 @@ authRouter.post("/register", validateBody(RegisterSchema), async (req, res) => {
 
     const hash = await bcrypt.hash(password, 12);
     const id = uuid();
-    execute("INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)", [id, name, email, hash]);
-    execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", [id]);
+    await execute("INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)", [id, name, email, hash]);
+    await execute("INSERT INTO user_settings (user_id) VALUES (?) ON CONFLICT DO NOTHING", [id]);
 
     const token = signToken({ userId: id, email });
     res.status(201).json({ ok: true, token, user: { id, name, email } });
@@ -48,7 +48,7 @@ authRouter.post("/login", validateBody(LoginSchema), async (req, res) => {
   try {
     const { email, password } = req.body as z.infer<typeof LoginSchema>;
 
-    const user = queryOne<{ id: string; email: string; name: string; password: string; avatar_url: string | null }>(
+    const user = await queryOne<{ id: string; email: string; name: string; password: string; avatar_url: string | null }>(
       "SELECT id, email, name, password, avatar_url FROM users WHERE email = ?",
       [email],
     );
@@ -72,9 +72,9 @@ authRouter.post("/login", validateBody(LoginSchema), async (req, res) => {
 });
 
 // GET /auth/me
-authRouter.get("/me", requireAuth, (req, res) => {
+authRouter.get("/me", requireAuth, async (req, res) => {
   try {
-    const user = queryOne<{ id: string; email: string; name: string; avatar_url: string | null; created_at: string }>(
+    const user = await queryOne<{ id: string; email: string; name: string; avatar_url: string | null; created_at: string }>(
       "SELECT id, email, name, avatar_url, created_at FROM users WHERE id = ?",
       [req.user!.userId],
     );

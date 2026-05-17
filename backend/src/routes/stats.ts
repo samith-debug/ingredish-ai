@@ -6,19 +6,21 @@ export const statsRouter = Router();
 statsRouter.use(requireAuth);
 
 // GET /stats
-statsRouter.get("/", (req, res) => {
+statsRouter.get("/", async (req, res) => {
   try {
     const userId = req.user!.userId;
 
-    const genRow    = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ?", [userId]);
-    const favRow    = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM favorites WHERE user_id = ?", [userId]);
-    const watchRow  = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM activity_log WHERE user_id = ? AND action = 'watched'", [userId]);
-    const weekGen   = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ? AND created_at >= datetime('now','-7 days')", [userId]);
-    const weekFav   = queryOne<{ count: number }>("SELECT COUNT(*) as count FROM favorites WHERE user_id = ? AND created_at >= datetime('now','-7 days')", [userId]);
+    const [genRow, favRow, watchRow, weekGen, weekFav] = await Promise.all([
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ?", [userId]),
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM favorites WHERE user_id = ?", [userId]),
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM activity_log WHERE user_id = ? AND action = 'watched'", [userId]),
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM generated_recipes WHERE user_id = ? AND created_at >= NOW() - INTERVAL '7 days'", [userId]),
+      queryOne<{ count: string }>("SELECT COUNT(*) as count FROM favorites WHERE user_id = ? AND created_at >= NOW() - INTERVAL '7 days'", [userId]),
+    ]);
 
     // Cooking streak — distinct days with 'cooked' or 'generated' activity
-    const streakRows = query<{ day: string }>(
-      `SELECT DISTINCT date(created_at) as day
+    const streakRows = await query<{ day: string }>(
+      `SELECT DISTINCT created_at::date as day
        FROM activity_log
        WHERE user_id = ? AND action IN ('cooked','generated')
        ORDER BY day DESC`,
@@ -43,9 +45,11 @@ statsRouter.get("/", (req, res) => {
     }
 
     // Recent activity
-    const recentActivity = query<{ action: string; metadata: string; created_at: string }>(
-      "SELECT action, metadata, created_at FROM activity_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
-      [userId],
+    const recentActivity = (
+      await query<{ action: string; metadata: string; created_at: string }>(
+        "SELECT action, metadata, created_at FROM activity_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
+        [userId],
+      )
     ).map((r) => ({
       ...r,
       metadata: (() => { try { return JSON.parse(r.metadata); } catch { return {}; } })(),
@@ -54,12 +58,12 @@ statsRouter.get("/", (req, res) => {
     res.json({
       ok: true,
       stats: {
-        recipesGenerated:  genRow?.count   ?? 0,
-        recipesThisWeek:   weekGen?.count  ?? 0,
+        recipesGenerated:  Number(genRow?.count   ?? 0),
+        recipesThisWeek:   Number(weekGen?.count  ?? 0),
         cookingStreakDays:  streak,
-        favoritesSaved:    favRow?.count   ?? 0,
-        favoritesThisWeek: weekFav?.count  ?? 0,
-        videosWatched:     watchRow?.count ?? 0,
+        favoritesSaved:    Number(favRow?.count   ?? 0),
+        favoritesThisWeek: Number(weekFav?.count  ?? 0),
+        videosWatched:     Number(watchRow?.count ?? 0),
       },
       recentActivity,
     });

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { generateText, Output } from "ai";
-import { execute, uuid, queryOne } from "../db/client.js";
+import { execute, uuid } from "../db/client.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validateBody } from "../middleware/validate.js";
 
@@ -37,14 +37,13 @@ const GenerateInputSchema = z.object({
 });
 
 // ── POST /generate ────────────────────────────────────────────
-// Public: works for guests too. Auth is optional — if token present, saves to DB.
 generateRouter.post("/", validateBody(GenerateInputSchema), async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     res.status(503).json({
       ok: false,
       error: "not_configured",
-      message: "AI service not configured. Set GEMINI_API_KEY in backend/.env",
+      message: "AI service not configured. Set GEMINI_API_KEY in environment.",
     });
     return;
   }
@@ -79,7 +78,6 @@ Return exactly 3 distinct recipes.`,
     const recipes = experimental_output.recipes;
 
     // ── Persist if authenticated ───────────────────────────────
-    // requireAuth middleware is NOT on this route, but we check the token ourselves
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const { verifyToken } = await import("../lib/jwt.js");
@@ -88,7 +86,7 @@ Return exactly 3 distinct recipes.`,
         for (const r of recipes) {
           const id = uuid();
           try {
-            execute(
+            await execute(
               `INSERT INTO generated_recipes
                  (id, user_id, title, cuisine, time, difficulty, calories, protein,
                   carbs, fat, description, ingredients, steps, youtube_search)
@@ -99,7 +97,7 @@ Return exactly 3 distinct recipes.`,
                 JSON.stringify(r.ingredients), JSON.stringify(r.steps), r.youtubeSearch,
               ],
             );
-            execute(
+            await execute(
               "INSERT INTO activity_log (id, user_id, action, metadata) VALUES (?,?,'generated',?)",
               [uuid(), payload.userId, JSON.stringify({ recipeId: id, title: r.title })],
             );
